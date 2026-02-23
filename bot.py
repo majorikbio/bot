@@ -5,36 +5,90 @@ from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 
-# Загружаем токен
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
-# Список валют
 CURRENCIES = {
-    'USD': {'name': 'Доллар', 'icon': '💵', 'id': 145},
-    'EUR': {'name': 'Евро', 'icon': '💶', 'id': 19},
-    'RUB': {'name': 'Российский рубль', 'icon': '₽', 'id': 298},
-    'PLN': {'name': 'Злотый', 'icon': '💷', 'id': 195},
-    'CNY': {'name': 'Юань', 'icon': '🇨🇳', 'id': 307},
+    'USD': {'name': 'Доллар', 'icon': '💵'},
+    'EUR': {'name': 'Евро', 'icon': '💶'},
+    'RUB': {'name': 'Рубль', 'icon': '₽'},
 }
 
-# Хранилище данных пользователей
 user_data = {}
 
-# Функция получения курса валюты
 def get_rate(currency_code):
     try:
         url = f"https://api.nbrb.by/exrates/rates/{currency_code}?parammode=2"
-        response = requests.get(url, timeout=10)
-        if response.status_code == 200:
-            return response.json()
-    except Exception as e:
-        print(f"Ошибка API: {e}")
-    return None
+        r = requests.get(url, timeout=10)
+        return r.json() if r.status_code == 200 else None
+    except:
+        return None
 
-# Функция получения всех курсов
-def get_all_rates():
-    try:
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    user_data[user_id] = {'from': 'USD', 'to': 'RUB', 'amount': 1}
+    
+    keyboard = [
+        [InlineKeyboardButton("💱 Конвертировать", callback_data='convert')],
+        [InlineKeyboardButton("📊 Курсы", callback_data='rates')],
+    ]
+    await update.message.reply_text("🔴 Выбери действие:", reply_markup=InlineKeyboardMarkup(keyboard))
+
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+    user_id = q.from_user.id
+    data = q.data
+    
+    if data == 'convert':
+        await show_converter(q, user_id)
+    elif data == 'rates':
+        await show_rates(q)
+
+async def show_converter(q, user_id):
+    if user_id not in user_data:
+        user_data[user_id] = {'from': 'USD', 'to': 'RUB', 'amount': 1}
+    
+    from_curr = user_data[user_id]['from']
+    to_curr = user_data[user_id]['to']
+    amount = user_data[user_id]['amount']
+    
+    from_data = get_rate(from_curr)
+    to_data = get_rate(to_curr)
+    
+    if not from_data or not to_data:
+        await q.edit_message_text("❌ Ошибка")
+        return
+    
+    from_val = from_data['Cur_OfficialRate'] / from_data['Cur_Scale']
+    to_val = to_data['Cur_OfficialRate'] / to_data['Cur_Scale']
+    result = amount * from_val / to_val
+    
+    await q.edit_message_text(
+        f"{amount} {from_curr} = {result:.2f} {to_curr}",
+        reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton("🔙 Назад", callback_data="back")
+        ]])
+    )
+
+async def show_rates(q):
+    data = requests.get("https://api.nbrb.by/exrates/rates?periodicity=0", timeout=10).json()
+    text = "📊 Курсы:\n"
+    for curr in data[:5]:
+        code = curr['Cur_Abbreviation']
+        rate = curr['Cur_OfficialRate'] / curr['Cur_Scale']
+        text += f"{code}: {rate:.2f} BYN\n"
+    await q.edit_message_text(text)
+
+def main():
+    app = Application.builder().token(BOT_TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CallbackQueryHandler(button_handler))
+    print("✅ Запущено")
+    app.run_polling()
+
+if __name__ == '__main__':
+    main()    try:
         url = "https://api.nbrb.by/exrates/rates?periodicity=0"
         response = requests.get(url, timeout=10)
         if response.status_code == 200:
